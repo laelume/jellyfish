@@ -1,0 +1,816 @@
+/*Jellyfish index: clear-box approach for comparative visualizations of shared audio annotations*/
+
+# Functionality Mods: 
+# grabber hand functionality, plot sizes are good, zoom works, and points and connections display. 
+# designed using dark mode on pc chrome broswer but need to be mindful of contrast and color choice for light mose, as well as mobile layout. 
+# issues with small text boxes and contrast with existing background. want same relationship when inverted.  
+# want to update or reconfigure visualization backend stuff: D3.js, ECharts, Highcharts, Vega/Vega-Lite, Observable Plot, Dash
+# need also to make the little text box background of the cursor position i.e. peak and power vals corresponding to cursor, havd the same type of contrast as the ones tat are th epeak poits -- the contrast of the 'normal' behavior is still too strong to be visible in dark mode, it should be a kind of medium light grey, i want it to be slightly different from the 'detected peaks' but not by much, so its still visible. maybe the text color could be slightly different?
+# have different options for light / dark CSS styling i.e. "fun mode"
+
+# Specifies save location, need to reconficure when project is complete 
+thisdir='05_save_html_v4'
+target_dir=os.makedirs(os.path.join(daily_dir, thisdir), exist_ok=True)
+
+# The Def. 
+def save_html_v4(fig, plots, base_filename="psd_analysis", directory=None):
+    """
+    Create an interactive HTML visualization with improved data extraction and debugging.
+    Ensures points and graph connections are properly displayed.
+    """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        print("Plotly is not installed. Installing now...")
+        import pip
+        pip.main(['install', 'plotly'])
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        
+    from datetime import datetime
+    import json
+    import numpy as np
+    import os
+    
+    # Create a custom JSON encoder for NumPy types
+    class NumpyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.number):
+                return obj.item()
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            return super().default(obj)
+    
+    # Use daily_dir as the default base directory if none provided
+    if directory is None:
+        directory = f"{daily_dir}/psd_anal_html"
+    
+    # Get timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(directory, exist_ok=True)
+    
+    # Create a debug log file to track data extraction
+    debug_path = os.path.join(directory, f"{base_filename}_{timestamp}_debug.txt")
+    
+    with open(debug_path, 'w', encoding='utf-8') as debug_file:
+        debug_file.write(f"HTML Export Debug Log - {timestamp}\n")
+        debug_file.write("=======================================\n\n")
+        
+        # Determine grid dimensions
+        total_plots = len(plots)
+        n_cols = min(3, total_plots)
+        n_rows = int(np.ceil(total_plots / n_cols))
+        
+        debug_file.write(f"Grid dimensions: {n_rows} rows x {n_cols} columns\n")
+        debug_file.write(f"Total plots: {total_plots}\n\n")
+        
+        # Calculate vertical spacing dynamically based on number of rows
+        if n_rows > 1:
+            v_spacing = min(0.15, 0.2 / (n_rows - 1))  # Ensure it's less than 1/(rows-1)
+        else:
+            v_spacing = 0.15  # Default for single row
+        
+        # Create plotly figure
+        plotly_fig = make_subplots(
+            rows=n_rows, 
+            cols=n_cols,
+            subplot_titles=[getattr(plot, 'filename', f"Plot {i+1}") for i, plot in enumerate(plots)],
+            vertical_spacing=v_spacing,  # Use dynamic spacing
+            horizontal_spacing=0.08
+        )
+        
+        # Process each plot
+        for i, plot in enumerate(plots):
+            row = i // n_cols + 1
+            col = i % n_cols + 1
+            
+            debug_file.write(f"\nPLOT {i+1}: {getattr(plot, 'filename', 'Unknown')}\n")
+            debug_file.write(f"Row: {row}, Col: {col}\n")
+            
+            # Dump plot attributes for debugging
+            plot_attrs = {
+                'has frequencies': hasattr(plot, 'frequencies'),
+                'has psd_db': hasattr(plot, 'psd_db'),
+                'has peak_freqs': hasattr(plot, 'peak_freqs'),
+                'has peak_powers': hasattr(plot, 'peak_powers'),
+                'has selected_peaks': hasattr(plot, 'selected_peaks'),
+                'has pairs': hasattr(plot, 'pairs'),
+                'has graph': hasattr(plot, 'graph')
+            }
+            debug_file.write(f"Plot attributes: {plot_attrs}\n")
+            
+            # Add the main PSD curve
+            if hasattr(plot, 'frequencies') and hasattr(plot, 'psd_db'):
+                # Check data validity
+                freq_len = len(plot.frequencies)
+                psd_len = len(plot.psd_db)
+                debug_file.write(f"Main data: frequencies: {freq_len} points, psd_db: {psd_len} points\n")
+                
+                if freq_len > 0 and psd_len > 0:
+                    # Add main PSD curve
+                    plotly_fig.add_trace(
+                        go.Scatter(
+                            x=plot.frequencies,
+                            y=plot.psd_db,
+                            mode='lines',
+                            name=f"PSD",
+                            line=dict(color='black', width=1.5),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+                    debug_file.write(f"Added main PSD curve\n")
+                else:
+                    debug_file.write(f"WARNING: Empty frequency or PSD data\n")
+            
+            # Extract peak data
+            if hasattr(plot, 'peak_freqs') and hasattr(plot, 'peak_powers'):
+                peak_freqs = plot.peak_freqs
+                peak_powers = plot.peak_powers
+                debug_file.write(f"Peak data: {len(peak_freqs)} peaks detected\n")
+                
+                # Add detected peaks
+                if len(peak_freqs) > 0:
+                    plotly_fig.add_trace(
+                        go.Scatter(
+                            x=peak_freqs,
+                            y=peak_powers,
+                            mode='markers',
+                            marker=dict(color='gray', size=5, opacity=0.7),
+                            name="Peaks",
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+                    debug_file.write(f"Added peak markers\n")
+            else:
+                debug_file.write(f"WARNING: No peak data found\n")
+            
+            # Process selected peaks
+            if hasattr(plot, 'selected_peaks'):
+                selected_peaks = plot.selected_peaks
+                debug_file.write(f"Selected peaks: {len(selected_peaks)}\n")
+                
+                if len(selected_peaks) > 0:
+                    # We need to find the power values for these peaks
+                    selected_freqs = []
+                    selected_powers = []
+                    
+                    if hasattr(plot, 'peak_freqs') and hasattr(plot, 'peak_powers'):
+                        for freq in selected_peaks:
+                            # Find closest peak
+                            if len(plot.peak_freqs) > 0:
+                                idx = np.argmin(np.abs(np.array(plot.peak_freqs) - freq))
+                                if idx < len(plot.peak_powers):
+                                    selected_freqs.append(freq)
+                                    selected_powers.append(plot.peak_powers[idx])
+                    
+                    debug_file.write(f"Processed {len(selected_freqs)} selected peaks with power values\n")
+                    
+                    if len(selected_freqs) > 0:
+                        plotly_fig.add_trace(
+                            go.Scatter(
+                                x=selected_freqs,
+                                y=selected_powers,
+                                mode='markers+text',
+                                marker=dict(color='blue', size=10, line=dict(color='black', width=1)),
+                                text=[f"{f:.0f}" for f in selected_freqs],
+                                textposition="top center",
+                                name="Selected",
+                                showlegend=False
+                            ),
+                            row=row, col=col
+                        )
+                        debug_file.write(f"Added selected peak markers\n")
+            else:
+                debug_file.write(f"No selected peaks found\n")
+            
+            # Process pairs
+            if hasattr(plot, 'pairs'):
+                pairs = plot.pairs
+                debug_file.write(f"Pairs: {len(pairs)}\n")
+                
+                for pair_idx, pair in enumerate(pairs):
+                    if 'f0' in pair and 'f1' in pair:
+                        f0, f1 = pair['f0'], pair['f1']
+                        color = pair.get('color', 'red')
+                        
+                        debug_file.write(f"Pair {pair_idx+1}: f0={f0}, f1={f1}, color={color}\n")
+                        
+                        # Find power values
+                        if hasattr(plot, 'peak_freqs') and hasattr(plot, 'peak_powers') and len(plot.peak_freqs) > 0:
+                            f0_idx = np.argmin(np.abs(np.array(plot.peak_freqs) - f0))
+                            f1_idx = np.argmin(np.abs(np.array(plot.peak_freqs) - f1))
+                            
+                            if f0_idx < len(plot.peak_powers) and f1_idx < len(plot.peak_powers):
+                                f0_power = plot.peak_powers[f0_idx]
+                                f1_power = plot.peak_powers[f1_idx]
+                                
+                                # Draw connecting line
+                                plotly_fig.add_trace(
+                                    go.Scatter(
+                                        x=[f0, f1],
+                                        y=[f0_power, f1_power],
+                                        mode='lines',
+                                        line=dict(color=color, width=2),
+                                        name=f"Pair {pair_idx+1}",
+                                        showlegend=False
+                                    ),
+                                    row=row, col=col
+                                )
+                                
+                                # Add markers on top
+                                plotly_fig.add_trace(
+                                    go.Scatter(
+                                        x=[f0, f1],
+                                        y=[f0_power, f1_power],
+                                        mode='markers+text',
+                                        marker=dict(color='blue', size=10, line=dict(color='black', width=1)),
+                                        text=[f"{f0:.0f}", f"{f1:.0f}"],
+                                        textposition="top center",
+                                        name=f"Pair {pair_idx+1} Points",
+                                        showlegend=False
+                                    ),
+                                    row=row, col=col
+                                )
+                                
+                                # Add ratio annotation
+                                ratio = f1 / f0
+                                try:
+                                    plotly_fig.add_annotation(
+                                        text=f"f1/f0: {ratio:.3f}",
+                                        x=max(f0, f1),
+                                        y=max(f0_power, f1_power),
+                                        showarrow=False,
+                                        bgcolor="rgba(255, 182, 193, 0.5)",
+                                        bordercolor="red",
+                                        borderwidth=1,
+                                        row=row, col=col
+                                    )
+                                    debug_file.write(f"  Added pair with ratio: {ratio:.3f}\n")
+                                except Exception as e:
+                                    debug_file.write(f"  Error adding annotation: {e}\n")
+                                    
+            else:
+                debug_file.write(f"No pairs found\n")
+            
+            # Access graph data if exists
+            if hasattr(plot, 'graph') and plot.graph is not None:
+                debug_file.write(f"Graph data found\n")
+            elif hasattr(plot, 'get_graph_data'):
+                try:
+                    graph_data = plot.get_graph_data()
+                    # Process graph data
+                    if 'nodes' in graph_data and 'edges' in graph_data:
+                        nodes = graph_data['nodes']
+                        edges = graph_data['edges']
+                        debug_file.write(f"Graph data from get_graph_data: {len(nodes)} nodes, {len(edges)} edges\n")
+                        
+                        # If we have nodes and edges, add them to the visualization
+                        node_freqs = []
+                        node_powers = []
+                        
+                        for node in nodes:
+                            if 'frequency' in node and 'power' in node:
+                                node_freqs.append(node['frequency'])
+                                node_powers.append(node['power'])
+                        
+                        if len(node_freqs) > 0:
+                            plotly_fig.add_trace(
+                                go.Scatter(
+                                    x=node_freqs,
+                                    y=node_powers,
+                                    mode='markers',
+                                    marker=dict(color='green', size=8, symbol='square'),
+                                    name="Graph Nodes",
+                                    showlegend=False
+                                ),
+                                row=row, col=col
+                            )
+                        
+                        # Add edges
+                        for edge in edges:
+                            if 'source' in edge and 'target' in edge:
+                                source_freq = edge['source']
+                                target_freq = edge['target']
+                                
+                                # Find power values
+                                if hasattr(plot, 'peak_freqs') and hasattr(plot, 'peak_powers') and len(plot.peak_freqs) > 0:
+                                    source_idx = np.argmin(np.abs(np.array(plot.peak_freqs) - source_freq))
+                                    target_idx = np.argmin(np.abs(np.array(plot.peak_freqs) - target_freq))
+                                    
+                                    if source_idx < len(plot.peak_powers) and target_idx < len(plot.peak_powers):
+                                        source_power = plot.peak_powers[source_idx]
+                                        target_power = plot.peak_powers[target_idx]
+                                        
+                                        # Draw connecting line
+                                        plotly_fig.add_trace(
+                                            go.Scatter(
+                                                x=[source_freq, target_freq],
+                                                y=[source_power, target_power],
+                                                mode='lines',
+                                                line=dict(color=edge.get('color', 'purple'), width=1.5, dash='dot'),
+                                                name="Graph Edge",
+                                                showlegend=False
+                                            ),
+                                            row=row, col=col
+                                        )
+                except Exception as e:
+                    debug_file.write(f"Error processing graph data: {e}\n")
+            
+            # Set subplot properties
+            if hasattr(plot, 'plot_fmin') and hasattr(plot, 'plot_fmax'):
+                plotly_fig.update_xaxes(range=[plot.plot_fmin, plot.plot_fmax], row=row, col=col)
+                debug_file.write(f"Set x-axis range: [{plot.plot_fmin}, {plot.plot_fmax}]\n")
+            
+            # Set axis labels
+            plotly_fig.update_xaxes(title_text="Frequency (Hz)", row=row, col=col)
+            plotly_fig.update_yaxes(title_text="PSD (dB)", row=row, col=col)
+        
+        # Update layout
+        main_title = "PSD Analysis - Methods Comparison"
+        if hasattr(fig, '_suptitle') and fig._suptitle is not None:
+            if hasattr(fig._suptitle, 'get_text'):
+                main_title = fig._suptitle.get_text()
+        
+        # Make layout responsive for different screen sizes
+        plotly_fig.update_layout(
+            title=main_title,
+            height=max(600, 500* n_rows), #height=400 * n_rows,
+            width=500 * n_cols,
+            template="plotly_white",
+            margin=dict(l=50, r=50, t=100, b=50),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            # Auto-size for better mobile display
+            autosize=True, 
+            dragmode='pan'            
+        )
+        
+        debug_file.write("\nProcessed all plots. Finalizing HTML output...\n")
+
+
+
+
+    # Custom CSS for better styling and grab cursor
+    custom_css = """
+    <style>
+        /* Make the plot area show a grab cursor on hover */
+        .js-plotly-plot .plotly .nsewdrag {
+            cursor: grab !important;
+        }
+        
+        /* Change to grabbing cursor when actively dragging */
+        .js-plotly-plot .plotly .nsewdrag.dragging {
+            cursor: grabbing !important;
+        }
+        
+        /* Also apply grabbing cursor when mouse is down */
+        .js-plotly-plot .plotly .nsewdrag:active {
+            cursor: grabbing !important;
+        }
+        
+        /* Use JavaScript to add mouse down/up events */
+        .plotly-graph-div {
+            cursor: auto;
+        }
+        
+        /* Additional styling for hover effects */
+        .js-plotly-plot .plotly .cursor-pointer {
+            cursor: pointer !important;
+        }
+        
+        /* Improve axis labels */
+        .js-plotly-plot .plotly .xtitle, .js-plotly-plot .plotly .ytitle {
+            font-weight: bold !important;
+        }
+        
+
+        /* Container styling */
+        .instructions {
+            max-width: 1200px;
+            margin: 20px auto;
+            background-color: #f5f8fa;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .instructions h2 {
+            color: #2c3e50;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+        
+        .instructions .controls {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .instructions .section {
+            flex: 1;
+            min-width: 300px;
+        }
+        
+        .instructions h3 {
+            color: #3498db;
+        }
+        
+        .instructions ul {
+            list-style-type: none;
+            padding-left: 10px;
+        }
+        
+        .instructions .highlight {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+        
+        /* Mobile-specific adjustments */
+        @media (max-width: 768px) {
+            .instructions {
+                margin: 10px;
+                padding: 10px;
+            }
+            
+            .instructions .section {
+                min-width: 100%;
+            }
+            
+            .js-plotly-plot {
+                height: auto !important;
+                width: 100% !important;
+            }
+            
+            .plotly .main-svg {
+                width: 100% !important;
+            }
+            
+            .modebar-container {
+                transform: scale(0.8);
+                transform-origin: top right;
+            }
+        }
+
+>>>>>>>>>#
+>>>>>>>>># start implant for light and dark mode stylin
+>>>>>>>>>#
+
+    /* Improved CSS for better dark/light mode tooltip contrast */
+
+    <style>
+        /* Force strong visibility for all plot elements */
+        /* Main plot lines - visible in light mode */
+        .js-plotly-plot .plotly .scatter .lines path {
+            stroke: #222222 !important; 
+            stroke-width: 2px !important;
+            opacity: 1 !important;  /* Full opacity */
+        }
+
+        /* Grid lines - visible in light mode */
+        .js-plotly-plot .plotly .gridlayer path {
+            stroke: rgba(100, 100, 100, 0.7) !important;  /* Stronger contrast */
+        }
+
+        /* Point connections - visible in light mode */
+        .js-plotly-plot .plotly .scatter[data-trace-name*="Pair"] .lines path {
+            stroke-width: 2.5px !important;
+            opacity: 1 !important;
+        }
+
+        /* Dashed vertical lines - visible in light mode */
+        .js-plotly-plot .plotly .scatter .lines path[stroke-dasharray] {
+            stroke: #333333 !important;
+            stroke-width: 2px !important;
+            opacity: 1 !important;  /* Full opacity */
+        }
+
+        /* Graph Edge lines - visible in light mode */
+        .js-plotly-plot .plotly .scatter[data-trace-name*="Graph Edge"] .lines path {
+            stroke: #5900b3 !important; /* Dark purple */
+            stroke-width: 2px !important;
+            opacity: 1 !important;  /* Full opacity */
+        }
+
+
+    </style>
+    """
+   # End custom_css ; removed fun debug mode
+
+
+    # Add custom JavaScript to enhance drag behavior
+    custom_js = """
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        
+        // Wait for Plotly to initialize
+        setTimeout(function() {
+            const graphDivs = document.querySelectorAll('.js-plotly-plot');
+            
+            graphDivs.forEach(function(div) {
+                let isDragging = false;
+                let startX, startY;
+                let originalViewport = null;
+                
+                // Get the Plotly graph object
+                const gd = div._fullLayout ? div : div.parentNode;
+                
+                // Override default drag behavior
+                div.addEventListener('mousedown', function(e) {
+                    // Only handle primary button (left-click)
+                    if (e.button !== 0) return;
+                    
+                    // Skip if clicking on a legend or a plotly control
+                    if (e.target.closest('.legend') || e.target.closest('.modebar')) return;
+                    
+                    // Set dragging state
+                    isDragging = true;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    
+                    // Save current viewport
+                    try {
+                        originalViewport = {
+                            xaxis: Object.assign({}, gd._fullLayout.xaxis),
+                            yaxis: Object.assign({}, gd._fullLayout.yaxis)
+                        };
+                    } catch(err) {
+                        console.log('Error getting viewport:', err);
+                        return;
+                    }
+                    
+                    // Change cursor to grabbing
+                    document.body.style.cursor = 'grabbing';
+                    div.style.cursor = 'grabbing';
+                    
+                    // Prevent default behavior
+                    e.preventDefault();
+                });
+                
+                // Handle drag motion
+                document.addEventListener('mousemove', function(e) {
+                    if (!isDragging || !originalViewport) return;
+                    
+                    // Calculate distance moved
+                    const deltaX = e.clientX - startX;
+                    const deltaY = e.clientY - startY;
+                    
+                    try {
+                        // Convert pixel distance to data coordinates
+                        const xRange = originalViewport.xaxis.range;
+                        const yRange = originalViewport.yaxis.range;
+                        const layout = gd._fullLayout;
+                        
+                        const pixelToDataRatioX = (xRange[1] - xRange[0]) / layout.width;
+                        const pixelToDataRatioY = (yRange[1] - yRange[0]) / layout.height;
+                        
+                        // Calculate new ranges
+                        const newXRange = [
+                            xRange[0] - deltaX * pixelToDataRatioX,
+                            xRange[1] - deltaX * pixelToDataRatioX
+                        ];
+                        
+                        const newYRange = [
+                            yRange[0] + deltaY * pixelToDataRatioY,
+                            yRange[1] + deltaY * pixelToDataRatioY
+                        ];
+                        
+                        // Update the plot ranges
+                        Plotly.relayout(gd, {
+                            'xaxis.range': newXRange,
+                            'yaxis.range': newYRange
+                        });
+                    } catch(err) {
+                        console.log('Error during drag:', err);
+                    }
+                });
+                
+                // End dragging
+                document.addEventListener('mouseup', function() {
+                    if (isDragging) {
+                        isDragging = false;
+                        document.body.style.cursor = '';
+                        div.style.cursor = '';
+                    }
+                });
+                
+                // Handle mouse leave
+                document.addEventListener('mouseleave', function() {
+                    if (isDragging) {
+                        isDragging = false;
+                        document.body.style.cursor = '';
+                        div.style.cursor = '';
+                    }
+                });
+                
+                // Prevent default behavior of plotly drag which conflicts
+                div.addEventListener('plotly_relayouting', function(e) {
+                    if (isDragging) {
+                        // This prevents default plotly drag
+                        e.preventDefault();
+                    }
+                });
+            });
+            
+            // IMPORTANT ADDITION: Force styling for light mode visibility
+            // This ensures elements are visible by directly manipulating the DOM
+            console.log("Forcing element visibility...");
+            
+            // Force styling on all line elements
+            document.querySelectorAll('.js-plotly-plot .plotly .scatter .lines path').forEach(function(path) {
+                // Set attributes directly on the SVG path element
+                path.setAttribute('stroke-opacity', '1');
+                path.setAttribute('opacity', '1');
+                path.setAttribute('stroke-width', '2');
+                
+                // For non-dashed lines (main plot lines)
+                if (!path.getAttribute('stroke-dasharray')) {
+                    path.setAttribute('stroke', '#222222');
+                }
+                
+                // Apply inline styles as a backup
+                path.style.strokeOpacity = '1';
+                path.style.opacity = '1';
+                path.style.strokeWidth = '2px';
+            });
+            
+            // Force styling on grid lines
+            document.querySelectorAll('.js-plotly-plot .plotly .gridlayer path').forEach(function(path) {
+                path.setAttribute('stroke', 'rgba(100, 100, 100, 0.7)');
+                path.setAttribute('stroke-opacity', '0.7');
+                path.style.stroke = 'rgba(100, 100, 100, 0.7)';
+                path.style.strokeOpacity = '0.7';
+            });
+            
+            console.log("Visibility enforcement complete");
+        }, 1000); // Wait 1 second after page load
+    });
+    </script>
+    """
+
+    # end custom_js (removed fun debug mode)
+
+
+    # Define or set additional_js to empty string to avoid errors
+    additional_js = ""
+
+
+
+    # HTML instructions
+    instructions_html = """
+    <div class="instructions">
+        <h2>Interactive PSD Analysis</h2>
+        <div class="controls">
+            <div class="section">
+                <h3>Navigation Controls:</h3>
+                <ul>
+                    <li><span class="highlight">✋ Click and drag</span> to grab and pan the view</li>
+                    <li><span class="highlight">⚙️ Use the scroll wheel</span> to zoom in and out</li>
+                    <li><span class="highlight">🔍 Double-click</span> to reset the view</li>
+                </ul>
+            </div>
+            <div class="section">
+                <h3>Tools (toolbar at top-right):</h3>
+                <ul>
+                    <li><span class="highlight">📸 Camera icon</span> to download as PNG</li>
+                    <li><span class="highlight">✏️ Draw line</span> for measuring frequencies</li>
+                    <li><span class="highlight">🧹 Eraser</span> to remove drawn lines</li>
+                </ul>
+            </div>
+        </div>
+        <div class="mobile-note">
+            <p><strong>Note for mobile users:</strong> Use pinch gestures to zoom and drag with your finger to pan. Tap the menu icon to access tools.</p>
+        </div>
+    </div>
+    """
+    
+    # Define the HTML file path
+    html_filename = f"{base_filename}_{timestamp}.html"
+    html_path = os.path.join(directory, html_filename)
+    
+    # Generate the HTML content
+    html_str = plotly_fig.to_html(
+        include_plotlyjs='cdn',
+        full_html=True,
+        config={
+            'responsive': True,
+            'displayModeBar': True,
+            'scrollZoom': True,
+            'modeBarButtonsToAdd': ['drawline', 'eraseshape'],
+            'displaylogo': False,
+            'editable': False,  # Disable default editing
+            'staticPlot': False, # Keep interactivity
+        }
+    )
+    
+    # Add viewport meta tag for mobile responsiveness
+    viewport_meta = '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">'
+    html_str = html_str.replace('<head>', f'<head>{viewport_meta}')
+    
+    # Insert custom CSS before the closing </head> tag
+    html_str = html_str.replace('</head>', f'{custom_css}</head>')
+    
+    # Insert custom JavaScript before the closing </body> tag
+    html_str = html_str.replace('</body>', f'{custom_js}{additional_js}</body>')
+    
+    # Insert the instructions after <body>
+    html_str = html_str.replace('<body>', f'<body>{instructions_html}')
+    
+    # Save to file
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html_str)
+    
+    print(f"Interactive HTML saved to {html_path}")
+    print(f"Debug information saved to {debug_path}")
+    
+    # Save the data files
+    data_filename = f"{base_filename}_{timestamp}_pairdata.json"
+    data_path = os.path.join(directory, data_filename)
+    
+    # Export data
+    export_data = []
+    for plot in plots:
+        file_data = {
+            'filename': getattr(plot, 'filename', 'Untitled'),
+            'method': getattr(plot, 'method_name', 'Unknown'),
+            'pairs': []
+        }
+        if hasattr(plot, 'pairs'):
+            for pair in plot.pairs:
+                if 'f0' in pair and 'f1' in pair:
+                    file_data['pairs'].append({
+                        'f0': float(pair['f0']),
+                        'f1': float(pair['f1']),
+                        'ratio': float(pair['f1'] / pair['f0'])
+                    })
+        export_data.append(file_data)
+    
+    # Save the data with custom encoder
+    with open(data_path, 'w', encoding='utf-8') as f:
+        json.dump(export_data, f, indent=2, cls=NumpyEncoder)
+    
+    # Graph data
+    graph_filename = f"{base_filename}_{timestamp}_graphdata.json"
+    graph_path = os.path.join(directory, graph_filename)
+    
+    # Export graph data with safer serialization
+    graph_export_data = []
+    
+    for plot in plots:
+        graph_data = {'nodes': [], 'edges': []}
+        
+        # Try to get graph data safely
+        if hasattr(plot, 'get_graph_data'):
+            try:
+                raw_graph = plot.get_graph_data()
+                
+                # Process nodes
+                if 'nodes' in raw_graph:
+                    for node in raw_graph['nodes']:
+                        safe_node = {}
+                        for key, value in node.items():
+                            if hasattr(value, 'item'):
+                                safe_node[key] = value.item()
+                            elif isinstance(value, (np.ndarray, np.number)):
+                                safe_node[key] = float(value)
+                            else:
+                                safe_node[key] = value
+                        graph_data['nodes'].append(safe_node)
+                
+                # Process edges
+                if 'edges' in raw_graph:
+                    for edge in raw_graph['edges']:
+                        safe_edge = {}
+                        for key, value in edge.items():
+                            if hasattr(value, 'item'):
+                                safe_edge[key] = value.item()
+                            elif isinstance(value, (np.ndarray, np.number)):
+                                safe_edge[key] = float(value)
+                            else:
+                                safe_edge[key] = value
+                        graph_data['edges'].append(safe_edge)
+            except Exception as e:
+                print(f"Error processing graph data: {e}")
+                # Keep empty graph data
+        
+        file_data = {
+            'filename': getattr(plot, 'filename', 'Untitled'),
+            'method': getattr(plot, 'method_name', 'Unknown'),
+            'graph': graph_data
+        }
+        graph_export_data.append(file_data)
+    
+    # Save graph data
+    with open(graph_path, 'w', encoding='utf-8') as f:
+        json.dump(graph_export_data, f, indent=2, cls=NumpyEncoder)
+    
+    print(f"Data info saved to: {data_path}\n")
+    print(f"Graph info saved to: {graph_path}\n")
+    
+    return html_path, data_path, graph_path
+
+# make sure we're calling the same function as defined above! 
+html_path, data_path, graph_path = save_html_v4(fig, plots)
